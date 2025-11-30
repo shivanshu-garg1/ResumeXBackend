@@ -17,7 +17,10 @@ app.use(cookieParser());
 
 app.use(
   cors({
-      origin: "https://resumex-pearl.vercel.app",
+  origin: [
+    "http://localhost:8080",
+    "https://resumex-pearl.vercel.app"
+  ],
     // origin: `http://localhost:8080`,
     credentials: true,
   })
