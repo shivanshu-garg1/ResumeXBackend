@@ -20,7 +20,6 @@ app.use(
     "http://localhost:8080",
     "https://resumex-flax.vercel.app/"
   ],
-    origin: `http://localhost:8080`,
     credentials: true,
   })
 );
