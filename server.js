@@ -1,5 +1,5 @@
 // server.js
-require("./config/env");
+require("./Config/env");
 const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
