@@ -20,9 +20,9 @@ app.use(
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
+app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(cookieParser());
 
 const authRoutes = require("./Routes/authRoutes");
 const atsRoutes = require("./Routes/atsRoutes");
