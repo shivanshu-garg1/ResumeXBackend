@@ -1,5 +1,9 @@
 const express = require("express");
-const { analyzeResumeWithGemini,getRecentReports } = require("../Controllers/atsController");
+const {
+  analyzeResumeWithGroq,
+  getRecentReports,
+  downloadReportPdf,
+} = require("../Controllers/atsController");
 const protect = require("../Middleware/authmiddleware");
 const upload = require("../Middleware/multer");
 
@@ -12,7 +16,9 @@ router.post(
     { name: "resume", maxCount: 1 },
     { name: "jobDescription", maxCount: 1 },
   ]),
-  analyzeResumeWithGemini
+  analyzeResumeWithGroq
 );
 router.get("/recent", protect, getRecentReports);
+router.get("/report/:id/full-download", downloadReportPdf);
+
 module.exports = router;

@@ -1,11 +1,6 @@
-// Utils/reportPdf.js
 const PDFDocument = require("pdfkit");
 
-/**
- * Generate a PDF buffer from ATS analysis JSON.
- * @param {object} analysis - The ATS analysis object returned by Gemini.
- * @returns {Promise<Buffer>}
- */
+
 function generateReportPdf(analysis) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ margin: 50 });

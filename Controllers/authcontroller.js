@@ -3,6 +3,7 @@ const { generateToken } = require("../Utils/jwt");
 const { hashPassword, comparePassword } = require("../Utils/bcrypt");
 const { sendEmail } = require("../Utils/sendEmail");
 
+
 //  SignUp
 const signUp = async (req, res) => {
   const { name, email, password } = req.body;

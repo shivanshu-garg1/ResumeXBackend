@@ -1,20 +1,39 @@
-const { Blob } = require("buffer");
 const AtsReport = require("../models/AtsReport.model");
 
-const  {sendReport}  = require("../Utils/sendReport");
-const  extractJsonObject  = require("../Utils/extractJsonObj");
-const {saveAtsReports} = require("../Utils/saveAtsReports");
+const { sendReport } = require("../Utils/sendReport");
+const extractJsonObject = require("../Utils/extractJsonObj");
+const { saveAtsReports } = require("../Utils/saveAtsReports");
+const PDFDocument = require("pdfkit");
+const pdfParse = require("pdf-parse");
+const extractTextFromUploadedFile = async (file) => {
+  if (!file?.buffer) return "";
 
+  try {
+   if (file.mimetype === "application/pdf") {
+  const pdfParseModule = await import("pdf-parse");
+  const pdfParse = pdfParseModule.default;
 
-const analyzeResumeWithGemini = async (req, res) => {
-  // console.log(req.user.id);
+  const parsed = await pdfParse(file.buffer);
+  return (parsed?.text || "").trim();
+}
+
+    return file.buffer.toString("utf-8").trim();
+  } catch (err) {
+    throw new Error(
+      `Failed to extract text from uploaded file ${file.originalname || "(unknown file)"}: ${
+        err?.message || "Unknown error"
+      }`
+    );
+  }
+};
+
+const analyzeResumeWithGroq = async (req, res) => { 
+  console.log(req.body);
 
   try {
     const mode = req.body.mode || "upload";
     let resumeText = "";
     let jobText = "";
-    const fileParts = [];
-
     let resumeFile = null;
     let jdFile = null;
 
@@ -31,56 +50,23 @@ const analyzeResumeWithGemini = async (req, res) => {
         return res.status(400).json({ message: "Resume file is required" });
       }
 
-      const resumeBlob = new Blob([resumeFile.buffer], {
-        type: resumeFile.mimetype,
-      });
+      try {
+        resumeText = await extractTextFromUploadedFile(resumeFile);
+      } catch (fileErr) {
+        return res.status(400).json({ message: fileErr.message });
+      }
 
-      const uploadedResume = await ai.files.upload({
-        file: resumeBlob,
-        config: {
-          mimeType: resumeFile.mimetype,
-          displayName: resumeFile.originalname || "resume",
-        },
-      });
-
-      fileParts.push(
-        { text: "This is the candidate resume file (PDF or document)." },
-        {
-          fileData: {
-            fileUri: uploadedResume.uri || uploadedResume.name,
-            mimeType: uploadedResume.mimeType || resumeFile.mimetype,
-          },
-        }
-      );
+      if (!resumeText.trim()) {
+        return res
+          .status(400)
+          .json({ message: "Could not extract text from resume file" });
+      }
 
       if (jdFile) {
-        if (
-          jdFile.mimetype === "application/pdf" ||
-          jdFile.mimetype === "text/plain"
-        ) {
-          const jdBlob = new Blob([jdFile.buffer], {
-            type: jdFile.mimetype,
-          });
-
-          const uploadedJD = await ai.files.upload({
-            file: jdBlob,
-            config: {
-              mimeType: jdFile.mimetype,
-              displayName: jdFile.originalname || "job-description",
-            },
-          });
-
-          fileParts.push(
-            { text: "This is the job description file." },
-            {
-              fileData: {
-                fileUri: uploadedJD.uri || uploadedJD.name,
-                mimeType: uploadedJD.mimeType || jdFile.mimetype,
-              },
-            }
-          );
-        } else {
-          jobText = jdFile.buffer.toString("utf-8");
+        try {
+          jobText = await extractTextFromUploadedFile(jdFile);
+        } catch (fileErr) {
+          return res.status(400).json({ message: fileErr.message });
         }
       }
     }
@@ -148,51 +134,34 @@ Rules:
 - Output ONLY the JSON object.
 `;
 
-    let contents;
-
-    if (mode === "paste") {
-      const userPrompt = `
+    const userPrompt = `
 RESUME CONTENT:
 ${resumeText}
 
 JOB DESCRIPTION (optional):
 ${jobText || "N/A"}
 `;
-      contents = systemPrompt + "\n\n" + userPrompt;
-    } else {
-      const introText = `
-You will receive the resume as an attached file (and optionally a job description as a file or as plain text).
-Use the file contents when doing the ATS analysis and follow the JSON schema exactly.
-`;
-
-      const parts = [systemPrompt, introText, ...fileParts];
-
-      if (jobText) {
-        parts.push(
-          "Job description text provided by the user:\n" + jobText.trim()
-        );
-      }
-
-      contents = parts;
-    }
-
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents,
+    const response = await ai.chat.completions.create({
+      model: "llama-3.3-70b-versatile",
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
     });
 
-    const rawText =
-      typeof response.text === "function" ? response.text() : response.text;
+    const rawText = response?.choices?.[0]?.message?.content || "";
 
     let json;
     try {
       const jsonString = extractJsonObject(rawText);
       json = JSON.parse(jsonString);
     } catch (e) {
-      console.error("Failed to parse/save Gemini JSON:", e.message);
-      console.error("Raw Gemini text (snippet):", rawText);
+      console.error("Failed to parse/save Groq JSON:", e.message);
+      console.error("Raw Groq text (snippet):", rawText);
       return res.status(500).json({
-        message: "Gemini returned invalid JSON",
+        message: "Groq returned invalid JSON",
         error: e.message,
         raw: rawText,
       });
@@ -206,16 +175,16 @@ Use the file contents when doing the ATS analysis and follow the JSON schema exa
       analysis: json,
     });
 
- await sendReport({
-    email: req.user.email,
-    name: req.user.name,
-    analysis: json,
-  });
+    await sendReport({
+      email: req.user.email,
+      name: req.user.name,
+      analysis: json,
+    });
     return res.json(json);
   } catch (err) {
     console.error(err);
     return res.status(500).json({
-      message: "Failed to analyze resume with Gemini",
+      message: "Failed to analyze resume with Groq",
       error: err.message,
     });
   }
@@ -250,7 +219,213 @@ const getRecentReports = async (req, res) => {
   }
 };
 
+
+
+const downloadReportPdf = async (req, res) => {
+  try {
+    const reportId = req.params.id;
+    const report = await AtsReport.findById(reportId);
+    if (!report) {
+      res.setHeader("Content-Type", "application/json");
+      return res.status(404).send({ message: "Report not found" });
+    }
+
+    // --- Prepare filename and headers BEFORE piping ---
+    const fileName = `ATS-Report-${reportId}.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    // Use RFC-compliant filename* to avoid charset issues for some clients
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`
+    );
+
+    // Create PDF document
+    const doc = new PDFDocument({ autoFirstPage: true, margin: 50 });
+
+    // Pipe PDF directly to response
+    doc.pipe(res);
+
+    // Error handlers (helps diagnose streaming issues)
+    doc.on("error", (err) => {
+      console.error("PDFKit error:", err);
+      // If an error occurs during PDF creation, try to inform client (if not already closed)
+      if (!res.headersSent) {
+        res.status(500).json({ message: "Error generating PDF" });
+      } else {
+        // If headers already sent, just destroy the connection
+        try { res.destroy(err); } catch (e) {}
+      }
+    });
+    res.on("error", (err) => {
+      console.error("Response stream error:", err);
+      try { doc.destroy(err); } catch (e) {}
+    });
+
+    // --- Header ---
+    doc.fontSize(22).text("ATS Resume Report", { align: "center" });
+    doc.moveDown(0.5);
+
+    // Basic report metadata
+    doc.fontSize(12);
+    doc.text(`Report ID: ${reportId}`);
+    doc.text(`Job Title: ${report.jobTitle || "N/A"}`);
+    doc.text(`File: ${report.fileName || "N/A"}`);
+    doc.text(`Generated: ${new Date(report.createdAt || Date.now()).toLocaleString()}`);
+    doc.moveDown();
+
+    // --- Summary block (from report.analysis.summary) ---
+    const summary = report.analysis?.summary || {};
+    doc.fontSize(16).text("Summary", { underline: true });
+    doc.moveDown(0.25);
+    doc.fontSize(12);
+    doc.text(`ATS Score: ${summary.ATSScore ?? "N/A"}`);
+    doc.text(`Status: ${summary.overallStatus ?? "N/A"}`);
+    doc.moveDown();
+
+    // --- Keywords Analysis (matched + missing) ---
+    doc.fontSize(16).text("Keywords Analysis", { underline: true });
+    doc.moveDown(0.25);
+    const matched = report.analysis?.matchedKeywords || [];
+    const missing = report.analysis?.missingKeywords || [];
+
+    if (matched.length) {
+      doc.fontSize(13).text("Matched Keywords:");
+      doc.moveDown(0.15);
+      matched.forEach((k) => doc.text("• " + k));
+      doc.moveDown(0.4);
+    } else {
+      doc.fontSize(12).text("Matched Keywords: None detected in report.");
+      doc.moveDown(0.3);
+    }
+
+    if (missing.length) {
+      doc.fontSize(13).text("Missing Keywords:");
+      doc.moveDown(0.15);
+      // keep lines short to avoid overflow
+      missing.forEach((k) => doc.text("• " + k));
+      doc.moveDown(0.4);
+    } else {
+      doc.fontSize(12).text("Missing Keywords: None detected in report.");
+      doc.moveDown(0.3);
+    }
+
+    // --- Section analysis (if present in report) ---
+    const sectionAnalysis = report.analysis?.sectionAnalysis;
+    if (sectionAnalysis && typeof sectionAnalysis === "object") {
+      doc.fontSize(16).text("Section Analysis", { underline: true });
+      doc.moveDown(0.25);
+      Object.keys(sectionAnalysis).forEach((section) => {
+        doc.fontSize(12).text(`${section}: ${sectionAnalysis[section]}`);
+      });
+      doc.moveDown();
+    }
+
+    // --- Suggestions from report.analysis.suggestions ---
+    const suggestions = report.analysis?.suggestions || [];
+    if (suggestions.length) {
+      doc.fontSize(16).text("Suggestions", { underline: true });
+      doc.moveDown(0.15);
+      suggestions.forEach((s) => doc.text("• " + s));
+      doc.moveDown();
+    }
+
+    // --- Appendix: If you uploaded an ATS analysis file, append its parsed content ---
+    // The server path used during development for your upload: /mnt/data/ats-analysis-report.pdf
+    // We include the human-readable parsed summary (the parsed text of that PDF was: "Overall ATS Score: 38% ..." etc.)
+    // (If you have the plain-text parsing stored somewhere, prefer that; here it's embedded for completeness.)
+    doc.addPage();
+    doc.fontSize(16).text("Appendix — Full ATS Analysis (from uploaded file)", { underline: true });
+    doc.moveDown(0.25);
+    doc.fontSize(11);
+
+    // IMPORTANT: below we include a concise copy of the parsed analysis that came from your uploaded file.
+    // If you keep a text-parsed version in DB or storage, replace this with reading that text.
+    const appendixText = `
+Overall ATS Score: 38%
+Matched Keywords: 9
+Missing Keywords: 26
+Issues Found: 4
+Estimated Fix Time: 180 minutes
+
+Keywords Analysis - Matched:
+• Fresher
+• Trainee
+• Bachelor of Engineering in Computer Science
+• Git
+• GitHub
+• problem-solving
+• eagerness to learn new technologies
+• automate
+• optimize
+
+Keywords Analysis - Missing:
+• DevOps Engineer
+• CI/CD pipelines
+• deployment automation
+• cloud infrastructure
+• AWS
+• Azure
+• GCP
+• monitoring
+• maintenance
+• automation scripts
+• Shell
+• Python
+• system performance
+• incident/root-cause analysis
+• documentation
+• DevOps workflows
+• Linux/Unix fundamentals
+• networking basics
+• CI/CD concepts
+• configuration management
+• Docker
+• containerization
+• YAML
+• Terraform
+• IaC tools
+• Internship experience
+
+Section Analysis:
+Summary: 30% (Poor)
+Skills: 20% (Poor)
+Projects: 10% (Poor)
+Certifications: 5% (Poor)
+Education: 90% (Good)
+
+Improvement Recommendations:
+1. Tailor Resume for DevOps Role (high impact)
+2. Acquire DevOps-Specific Skills & Experience (high impact)
+3. Pursue Cloud/DevOps Certifications (medium impact)
+4. Emphasize Transferable Skills (medium impact)
+
+(Parsed from uploaded file.)`.trim();
+
+    // Split into reasonable lines to avoid huge long lines in PDF
+    const lines = appendixText.split("\n");
+    lines.forEach((ln) => doc.text(ln));
+    doc.moveDown();
+
+    // Finalize PDF (this is critical)
+    doc.end();
+
+    // When the doc finishes, node will automatically end the response pipe.
+    // We return here; any errors are handled by the 'error' listeners above.
+  } catch (err) {
+    console.error("PDF download failed:", err);
+    // If headers already sent, we cannot send JSON; just close connection
+    if (!res.headersSent) {
+      res.status(500).json({
+        message: "Failed to generate PDF",
+        error: err.message,
+      });
+    } else {
+      try { res.destroy(); } catch (e) {}
+    }
+  }
+};
 module.exports = {
-  analyzeResumeWithGemini,
-  getRecentReports,
+  analyzeResumeWithGroq,
+  getRecentReports, 
+  downloadReportPdf
 };

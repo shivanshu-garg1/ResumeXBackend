@@ -1,17 +1,13 @@
-// utils/ai.mjs
-import { GoogleGenAI } from "@google/genai";
+import Groq from "groq-sdk";
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
-if (!GEMINI_API_KEY) {
-  throw new Error("GEMINI_API_KEY is not set in environment variables");
+if (!GROQ_API_KEY) {
+  throw new Error("GROQ_API_KEY is not set in environment variables");
 }
 
-// This is the new-style client
-// Docs: https://googleapis.github.io/js-genai/ :contentReference[oaicite:0]{index=0}
-export const ai = new GoogleGenAI({
-  apiKey: GEMINI_API_KEY,
-  // apiVersion: "v1" // optional, default is beta
+export const ai = new Groq({
+  apiKey: GROQ_API_KEY,
 });
 
 export default ai;
